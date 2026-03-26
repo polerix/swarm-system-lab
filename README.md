@@ -1,4 +1,4 @@
-# 🌊 SwarmSystemLab 🌊
+# 🌊 swarm-system-lab 🌊
 
 💧 Swarm System Lab Simulator — autonomous hive warfare sandbox tuned for GitHub Pages, flowing with the swarm. 🫧
 
