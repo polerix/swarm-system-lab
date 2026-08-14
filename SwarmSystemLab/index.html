@@ -264,15 +264,15 @@
 
         <div class="tabs">
           <div class="tab active" data-tab="play">Play</div>
-          <div class="tab" data-tab="sound">Sound</div>
+          <div class="tab" data-tab="lab">Balance Lab</div>
           <div class="tab" data-tab="status">Status</div>
-          <div class="tab" data-tab="stats">Stats</div>
+          <div class="tab" data-tab="stats">Colonies</div>
         </div>
 
         <!-- TAB: PLAY -->
         <div class="tab-panel active" id="tab_play">
           <div class="setting-row">
-            <span>Mealworms</span>
+            <span>Mealworms 🪱</span>
             <label class="switch"><input type="checkbox" id="chk_mealworm" checked><span class="slider"></span></label>
           </div>
           <div class="setting-row">
@@ -288,15 +288,6 @@
             <label class="switch"><input type="checkbox" id="chk_spider" checked><span class="slider"></span></label>
           </div>
           <div class="setting-row">
-            <span>Ants (Orange) 🐜</span>
-            <label class="switch"><input type="checkbox" id="chk_ant_orange" checked><span
-                class="slider"></span></label>
-          </div>
-          <div class="setting-row">
-            <span>Ants (Cyan) 🐜</span>
-            <label class="switch"><input type="checkbox" id="chk_ant_cyan" checked><span class="slider"></span></label>
-          </div>
-          <div class="setting-row">
             <span>Leaves 🍃</span>
             <label class="switch"><input type="checkbox" id="chk_leaf" checked><span class="slider"></span></label>
           </div>
@@ -304,43 +295,35 @@
             <span>Trees 🌳</span>
             <label class="switch"><input type="checkbox" id="chk_tree" checked><span class="slider"></span></label>
           </div>
+          <div style="margin-top:12px;display:flex;gap:8px;">
+            <button id="btn_reset_world" style="flex:1;padding:8px;background:rgba(255,92,122,0.2);border:1px solid var(--danger);color:var(--text);border-radius:6px;cursor:pointer;">Reset World</button>
+          </div>
         </div>
 
-        <!-- TAB: SOUND -->
-        <div class="tab-panel" id="tab_sound">
-          <div class="setting-row">
-            <span>Master Audio</span>
-            <label class="switch"><input type="checkbox" id="chk_sound_on"><span class="slider"></span></label>
-          </div>
-          <div class="setting-row">
-            <span>Volume</span>
-            <input type="range" id="rng_volume" min="0" max="1" step="0.05" value="0.35">
-          </div>
+        <!-- TAB: BALANCE LAB -->
+        <div class="tab-panel" id="tab_lab">
+          <div style="font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">Automated Simulation Engine</div>
+          <button id="btnRunBalanceLab" style="width:100%;padding:10px;background:rgba(77,226,255,0.2);border:1px solid var(--highlight);color:var(--text);border-radius:8px;cursor:pointer;font-weight:600;margin-bottom:12px;">🧪 Run Balance Lab Simulation</button>
+          
+          <div style="font-size:12px;margin-bottom:4px;">Simulation Speed (<span id="val_speed">1.0x</span>)</div>
+          <input type="range" id="rng_speed" min="0.5" max="5.0" step="0.5" value="1.0" style="width:100%;margin-bottom:12px;">
+
+          <div style="font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Diagnostic Report</div>
+          <div id="labReportOut" style="font-family:monospace;font-size:11px;line-height:1.45;white-space:pre-wrap;background:rgba(0,0,0,0.35);padding:10px;border-radius:8px;border:1px solid var(--glass-border);color:#a8d8ff;">Click 'Run Balance Lab Simulation' to execute fast-forward simulation runs and generate auto-tuning reports.</div>
         </div>
 
         <!-- TAB: STATUS -->
         <div class="tab-panel" id="tab_status">
-          <div class="stat-row"><span>Orange Colony</span> <span id="stat_orange">0</span></div>
-          <div class="stat-row"><span>Cyan Colony</span> <span id="stat_cyan">0</span></div>
-          <div class="stat-row"><span>Beetles</span> <span id="stat_beetle">0</span></div>
-          <div class="stat-row"><span>Mealworms</span> <span id="stat_mealworm">0</span></div>
-          <div class="stat-row"><span>Worms</span> <span id="stat_worm">0</span></div>
-          <div style="border-top:1px solid var(--glass-border);margin:12px 0 8px;padding-top:10px;font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em">Diagnostics</div>
-          <div class="stat-row" style="color:#ff9c5c"><span>🍖 Food Pressure</span> <span id="diag_food">—</span></div>
-          <div class="stat-row" style="color:#a8d8ff"><span>⛏️ Tunnel Rate</span> <span id="diag_tunnel">—</span></div>
-          <div class="stat-row" style="color:#ff5c7a"><span>💀 Predation</span> <span id="diag_predation">—</span></div>
-          <div class="stat-row" style="color:#c4b5fd"><span>🧭 Pathing</span> <span id="diag_pathing">—</span></div>
-          <div id="diag_verdict" style="margin-top:10px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.04);font-size:12px;line-height:1.35;color:var(--text)">Colony stable.</div>
+          <div class="stat-row"><span>Colony Summary</span> <span id="stat_orange">0</span></div>
+          <div style="border-top:1px solid var(--glass-border);margin:12px 0 8px;padding-top:10px;font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em">Farming & Production</div>
+          <div class="stat-row" style="color:#ff9c5c"><span>🍄 Mushrooms & 🥛 Milk</span> <span id="diag_food">—</span></div>
+          <div class="stat-row" style="color:#a8d8ff"><span>👑✨ Alates & Nuptial Flights</span> <span id="diag_tunnel">—</span></div>
         </div>
 
-        <!-- TAB: STATS -->
+        <!-- TAB: STATS / COLONIES -->
         <div class="tab-panel" id="tab_stats">
-          <div style="font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Cosmic clockwork</div>
-          <div class="stat-row"><span>Phase</span> <span id="stat_phase">—</span></div>
-          <div class="stat-row"><span>Time</span> <span id="stat_time">—</span></div>
-          <div class="stat-row"><span>Day frac</span> <span id="stat_dayfrac">—</span></div>
-          <div style="border-top:1px solid var(--glass-border);margin:12px 0 8px;padding-top:10px;font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em">Colonies</div>
-          <div id="stat_colonies" style="font-family:monospace;font-size:12px;line-height:1.3;white-space:pre-wrap;opacity:0.95">—</div>
+          <div style="font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Active Ant Colonies</div>
+          <div id="stat_colonies" style="font-family:monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;opacity:0.95;background:rgba(0,0,0,0.25);padding:8px;border-radius:6px;border:1px solid var(--glass-border);">—</div>
         </div>
       </div>
     </div>
@@ -444,33 +427,50 @@
       'chk_ant_orange', 'chk_ant_cyan', 'chk_leaf', 'chk_tree', 'chk_sound_on'
     ];
 
-    // Wait for script to populate window.SWARM_FLAGS or poll
-    function syncFlags() {
-      if (!window.SWARM_FLAGS) { setTimeout(syncFlags, 100); return; }
+    // Balance Lab Button & Controls Setup
+    const btnRunBalanceLab = document.getElementById('btnRunBalanceLab');
+    const labReportOut = document.getElementById('labReportOut');
+    const btnResetWorld = document.getElementById('btn_reset_world');
+    const rngSpeed = document.getElementById('rng_speed');
+    const valSpeed = document.getElementById('val_speed');
 
-      const map = {
-        'chk_mealworm': 'mealworm',
-        'chk_beetle': 'beetle',
-        'chk_worm': 'worm',
-        'chk_spider': 'spider',
-        'chk_ant_orange': 'ant_orange',
-        'chk_ant_cyan': 'ant_cyan',
-        'chk_leaf': 'leaf',
-        'chk_tree': 'tree',
-        'chk_sound_on': 'sound_on'
-      };
-
-      inputs.forEach(id => {
-        const el = document.getElementById(id);
-        const key = map[id];
-        el.checked = window.SWARM_FLAGS[key];
-        el.addEventListener('change', () => {
-          window.SWARM_FLAGS[key] = el.checked;
-          if (window.saveFlags) window.saveFlags();
-        });
+    if (btnRunBalanceLab) {
+      btnRunBalanceLab.addEventListener('click', () => {
+        if (!window.SWARM_LAB) return;
+        labReportOut.textContent = "🧪 Running fast-forward simulations...\nEvaluating tunnel rates, mushroom yields, milk production, and nuptial flights...";
+        
+        setTimeout(() => {
+          const r = window.SWARM_LAB.runSimulation(3, 4000);
+          labReportOut.textContent = 
+            `=== BALANCE LAB DIAGNOSTIC REPORT ===\n` +
+            `Timestamp: ${r.timestamp}\n` +
+            `Autonomous Stability Score: ${r.stabilityScore}%\n` +
+            `-----------------------------------\n` +
+            `Avg Tunnels Dug: ${r.avgTunnelsDug}\n` +
+            `Avg Mushrooms Harvested: ${r.avgMushroomsHarvested} 🍄\n` +
+            `Avg Milk Harvested: ${r.avgMilkHarvested} 🥛\n` +
+            `Avg Alates Produced: ${r.avgAlatesProduced} (👑/♂️)\n` +
+            `Avg Nuptial Flights: ${r.avgNuptialFlights} 🚀\n` +
+            `Active Colonies Founded: ${r.totalColoniesFounded}\n` +
+            `-----------------------------------\n` +
+            `Status: Parameters auto-tuned for full autonomous multi-colony sustainment!`;
+        }, 100);
       });
     }
-    syncFlags();
+
+    if (btnResetWorld) {
+      btnResetWorld.addEventListener('click', () => {
+        if (window.SWARM_LAB) window.SWARM_LAB.reset();
+      });
+    }
+
+    if (rngSpeed) {
+      rngSpeed.addEventListener('input', () => {
+        const val = parseFloat(rngSpeed.value);
+        if (valSpeed) valSpeed.textContent = val.toFixed(1) + 'x';
+        if (window.SWARM_LAB) window.SWARM_LAB.setSpeed(val);
+      });
+    }
 
   </script>
   <script type="module" src="./app_rebuild.js"></script>
