@@ -53,7 +53,7 @@
      1) Tunable parameters (Balance Lab adjusts these)
   ========================================================= */
   const CFG = {
-    scoutFrac: 0.12,
+    scoutFrac: 0.28, // Fix 13: raised from 0.12
     diggerFrac: 0.20,
     foragePersistence: 0.65,
     leafFallMult: 1.05,
@@ -676,7 +676,7 @@
   const ROLE = { DRONE: 0, SCOUT: 1 };
 
   function casteStats(caste) {
-    if (caste === CASTE.QUEEN) return { hpMax: 30, eMax: 24, upkeep: 0.11, moveE: 0.06, movePeriod: 0.18, cap: 0, speed: 1.0 };
+    if (caste === CASTE.QUEEN) return { hpMax: 90, eMax: 24, upkeep: 0.11, moveE: 0.06, movePeriod: 0.18, cap: 0, speed: 1.0 }; // Fix 9: Queen HP raised from 30
     if (caste === CASTE.WORKER) return { hpMax: 10, eMax: 10, upkeep: 0.065, moveE: 0.058, movePeriod: 0.14, cap: 2, speed: 1.0 };
     if (caste === CASTE.DIGGER) return { hpMax: 12, eMax: 11, upkeep: 0.070, moveE: 0.062, movePeriod: 0.15, cap: 2, speed: 0.95 };
     if (caste === CASTE.WARRIOR) return { hpMax: 50, eMax: 14, upkeep: 0.080, moveE: 0.072, movePeriod: 0.12, cap: 4, speed: 1.05 };
@@ -761,7 +761,7 @@
       e: st.eMax * 0.78,
       eMax: st.eMax,
       age: 0,
-      life: (caste === CASTE.QUEEN) ? 999999 : (caste === CASTE.WARRIOR ? 520 : 1500),
+      life: (caste === CASTE.QUEEN) ? 999999 : (caste === CASTE.WARRIOR ? 950 : 1500), // Fix 10: warrior lifespan raised
       carried: null,
       moveT: 0,
       actT: 0,
@@ -1122,7 +1122,7 @@
     let target = null, bestD = 9999;
     for (const m of mobs) {
       if (m.dead) continue;
-      if (m.type !== "beetle") continue;
+      if (m.type !== "beetle" && m.type !== "worm") continue; // Fix 8: warriors target worms too
       const d = wrappedDist(a.x, a.y, m.x, m.y);
       if (d < bestD) { bestD = d; target = m; }
     }
@@ -1571,7 +1571,7 @@
     if (n >= CAP.worms) return;
     const x = irand(20, W - 20);
     const y = irand(surfaceY + 62, H - 6);
-    const w = { type: "worm", x, y, hp: 100, hpMax: 100, upTask: false, dead: false, seg: [], segLen: 10, digSoilLast: false };
+    const w = { type: "worm", x, y, hp: 100, hpMax: 100, upTask: false, dead: false, seg: [], segLen: 10, digSoilLast: false, huntT: 0 };
     for (let i = 0; i < w.segLen; i++) w.seg.push({ x, y });
     mobs.push(w);
   }
@@ -1647,7 +1647,7 @@
   function stepBeetleEgg(e, dt, nightNow) {
     e.t += dt;
     if (!nightNow) return;
-    if (e.t > 10 + Math.random() * 10) {
+    if (e.t > 20 + Math.random() * 20) { // Fix 11: doubled hatch time to reduce egg cascade
       e.dead = true;
       spawnBeetleImago();
     }
@@ -1744,11 +1744,19 @@
 
     w.x = best.x; w.y = best.y;
 
+    // Fix 9: lerp worm damage over 3s when entering hunting mode
+    if (w.upTask) {
+      w.huntT = Math.min(w.huntT + dt, 3.0);
+    } else {
+      w.huntT = Math.max(w.huntT - dt, 0);
+    }
+    const _huntFrac = w.huntT / 3.0;
     for (const a of ants) {
       if (a.hp <= 0) continue;
       if (wrapX(a.x) === wrapX(w.x) && a.y === w.y) {
-        let dmg = (a.caste === CASTE.QUEEN) ? 0.8 : 0.5;
-        if (w.upTask) dmg = (a.caste === CASTE.QUEEN) ? 10 : 6;
+        const _baseDmg = (a.caste === CASTE.QUEEN) ? 0.8 : 0.5;
+        const _huntDmg = (a.caste === CASTE.QUEEN) ? 10 : 6;
+        const dmg = _baseDmg + (_huntDmg - _baseDmg) * _huntFrac;
         a.hp -= dmg * dt;
       }
     }
@@ -1795,15 +1803,19 @@
 
     const nightNow = isNight();
 
+    // Fix 12: scale spawn rate to colony size
+    const _totalPop = ants.filter(a => a.hp > 0).length;
+    const _spawnRate = _totalPop < 20 ? 0.50 : (_totalPop < 50 ? 0.75 : 1.0);
+
     if (beetleSpawnCD <= 0) {
-      if (Math.random() < 0.40) {
+      if (Math.random() < 0.40 * _spawnRate) {
         spawnBeetleImago();
         beetleSpawnCD = 22 + Math.random() * 26;
       } else beetleSpawnCD = 12 + Math.random() * 18;
     }
 
     if (wormSpawnCD <= 0 && wormAlertT > 0.1 && !nightNow) {
-      if (Math.random() < 0.35) {
+      if (Math.random() < 0.35 * _spawnRate) {
         spawnWorm();
         wormSpawnCD = 22 + Math.random() * 24;
       } else wormSpawnCD = 12 + Math.random() * 16;

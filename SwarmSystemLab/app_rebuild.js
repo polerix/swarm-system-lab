@@ -156,6 +156,12 @@
 
   const STAGE = { EGG: 'egg', JUV: 'juvenile', ADULT: 'adult' };
 
+  // Fix 1: Stage combat multipliers (adults stronger than juveniles)
+  const STAGE_MULT = {
+    [STAGE.JUV]:   { atk: 0.85, def: 0.85 },
+    [STAGE.ADULT]: { atk: 1.25, def: 1.25 }
+  };
+
   let nextId = 1;
   const ants = [];
   const mobs = [];
@@ -173,6 +179,9 @@
     if (!inb(x, y)) return 0;
     return pherFood[idx(wrapX(x), y)];
   }
+
+  // Fix 4: mob population caps
+  const MOB_CAP = { beetles: 8, worms: 12 };
 
   const GS_HOUR = 60 * 60;
   const GS_DAY = GAME_DAY_SECONDS;
@@ -318,6 +327,7 @@
       tunnelsDugCount: 0,
       chambersBuilt: 0,
       alatesProduced: 0,
+      foreignFed: 0,
       nuptialFlights: 0,
       eggTimer: 0,
       naniticCount: 0,
@@ -455,10 +465,16 @@
       moveT: 0,
       dead: false,
       e: 100,
+      // stage multiplier applied below
       bornAtGS: gameSeconds,
       dieAtGS: gameSeconds + (opts.lifespanGS ?? base.life),
       milkTimer: 0
     };
+
+    // Fix 1: apply stage multiplier (adults stronger)
+    const sm = STAGE_MULT[m.stage] || STAGE_MULT[STAGE.ADULT];
+    m.atk = Math.round(m.atk * sm.atk);
+    m.def = Math.round(m.def * sm.def);
 
     mobs.push(m);
     return m;
@@ -559,6 +575,8 @@
         m.moveT = 0;
         stepMob(m);
       }
+      // Fix 3: beetle energy drain framerate-independent
+      if (m.type === 'beetle') m.e -= 0.6 * dt;
       if (m.hp <= 0) m.dead = true;
     }
     for (let i = mobs.length - 1; i >= 0; i--) {
@@ -568,6 +586,15 @@
       }
     }
 
+    // Fix 4: enforce mob population caps
+    let _bc = 0, _wc = 0;
+    for (const m of mobs) { if (m.type === 'beetle') _bc++; if (m.type === 'worm') _wc++; }
+    for (let i = mobs.length - 1; i >= 0; i--) {
+      const m = mobs[i];
+      if (m.type === 'beetle' && _bc > MOB_CAP.beetles) { mobs.splice(i, 1); _bc--; }
+      else if (m.type === 'worm' && _wc > MOB_CAP.worms) { mobs.splice(i, 1); _wc--; }
+    }
+
     // 5) Spawners: Trees, Plants, Aphids, Leaves
     if (Math.random() < 0.08 * simSpeed) {
       if (resources.filter(r => r.kind === 'leaf').length < 35) {
@@ -575,6 +602,14 @@
       }
       if (mobs.filter(m => m.type === 'aphid').length < 15) {
         spawnMob('aphid', irand(10, W - 10), SURFACE_WALK_Y);
+      }
+    }
+
+    // Fix 6: mealworm breeding — cap at 12
+    if (Math.random() < 0.02 * simSpeed) {
+      const mealworms = mobs.filter(m => m.type === 'mealworm' && !m.dead);
+      if (mealworms.length < 12) {
+        spawnMob('mealworm', irand(5, W - 5), SURFACE_WALK_Y + irand(2, 8));
       }
     }
   }
@@ -651,6 +686,10 @@
         if (c.eggTimer > 1.8 && c.foodStore >= 2) {
           const egg = spawnAnt(a.team, CASTE.EGG, a.x, a.y);
 
+          // Fix 5: warrior unlock — foreignFed > 0 OR colony >= 60 OR elapsed >= 300s
+          const _colSize = ants.filter(a2 => a2.team === a.team).length;
+          const _canWarrior = c.foreignFed > 0 || _colSize >= 60 || gameSeconds >= 300;
+
           // Produce Alates (Virgin Queens & Males) when food surplus > nuptialSurplusReq
           if (c.foodStore > CFG.nuptialSurplusReq && Math.random() < 0.25) {
             if (Math.random() < 0.5) {
@@ -659,6 +698,8 @@
               egg.willBe = CASTE.MALE;
             }
             c.alatesProduced++;
+          } else if (_canWarrior && c.foodStore > 20 && Math.random() < 0.12) {
+            egg.willBe = CASTE.WARRIOR;
           } else {
             egg.willBe = CASTE.WORKER;
           }
@@ -951,7 +992,9 @@
     if (enemyMob) {
       moveToward(a, enemyMob.x, enemyMob.y);
       if (a.x === enemyMob.x && a.y === enemyMob.y) {
-        enemyMob.hp -= 15;
+        // Fix 2: symmetric combat formulas
+        enemyMob.hp -= Math.max(1, a.atk - enemyMob.def * 0.1);
+        a.hp -= Math.max(0, enemyMob.atk - a.def * 0.1);
       }
     } else {
       moveToward(a, c.homeX, SURFACE_WALK_Y);
@@ -1050,6 +1093,10 @@
     balanceTimer += dt;
     if (balanceTimer < 2.0) return;
     balanceTimer = 0;
+
+    // Fix 7: only rebalance/respawn if total ants below 2000 (raised from 500)
+    const totalAnts = ants.length;
+    if (totalAnts >= 2000) return;
 
     for (const c of colonies) {
       if (c.queenId !== -1) {
