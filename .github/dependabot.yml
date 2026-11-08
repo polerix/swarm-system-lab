@@ -1,7 +1,12 @@
+# Managed by consolidation pass 2026-11-07: grouped monthly updates, PR limit 3.
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: monthly
+  open-pull-requests-limit: 3
+  groups:
+    all:
+      patterns:
+      - '*'
