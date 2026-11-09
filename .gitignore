@@ -14,3 +14,9 @@
 *.pem
 *.p12
 id_rsa*
+
+# Compliance hygiene
+node_modules/
+.venv/
+venv/
+__pycache__/
