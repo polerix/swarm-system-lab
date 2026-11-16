@@ -17,8 +17,36 @@
      0) Utilities
   ========================================================= */
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const irand = (a, b) => a + ((Math.random() * (b - a + 1)) | 0);
-  const choice = (arr) => arr[(Math.random() * arr.length) | 0];
+
+  /* ---------------------------------------------------------
+     0a) Seeded RNG (mulberry32)
+     Every stochastic decision in the simulation goes through
+     rng(). Math.random() is used in exactly one place: picking
+     the initial seed at load, before the sim exists.
+  --------------------------------------------------------- */
+  function mulberry32(a) {
+    return function () {
+      a |= 0;
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  let _seed = (Math.random() * 0xFFFFFFFF) >>> 0; // load-time entropy only
+  let _rng = mulberry32(_seed);
+  const rng = () => _rng();
+
+  function setSeed(n) {
+    _seed = (Number(n) >>> 0);
+    _rng = mulberry32(_seed);
+    return _seed;
+  }
+  function getSeed() { return _seed; }
+
+  const irand = (a, b) => a + ((rng() * (b - a + 1)) | 0);
+  const choice = (arr) => arr[(rng() * arr.length) | 0];
 
   /* =========================================================
      1) Game Time & Weather
@@ -393,7 +421,7 @@
       atk: 6, def: 6,
       role: ROLE.IDLE, carried: null, carriedKind: null,
       moveT: 0, age: 0, hatchTime: 0,
-      life: 2000 + Math.random() * 500,
+      life: 2000 + rng() * 500,
       bornAtGS: gameSeconds,
       dieAtGS: gameSeconds + (45 * GS_DAY),
       mem: {}
@@ -405,7 +433,7 @@
       a.dieAtGS = gameSeconds + (9999 * GS_YEAR);
     } else if (caste === CASTE.EGG) {
       a.hp = 20; a.hpMax = 20;
-      a.hatchTime = 6 + Math.random() * 4;
+      a.hatchTime = 6 + rng() * 4;
       a.willBe = CASTE.NANITIC;
       a.dieAtGS = gameSeconds + (5 * GS_DAY);
     } else if (caste === CASTE.NANITIC) {
@@ -512,7 +540,7 @@
         c.mushFarmTiles = mushTiles;
 
         for (const t of mushTiles) {
-          if (Math.random() < 0.35 * CFG.mushYieldRate) {
+          if (rng() < 0.35 * CFG.mushYieldRate) {
             const hasMush = resources.some(r => !r.dead && !r.carried && r.kind === 'mushroom' && r.x === t.x && r.y === t.y);
             if (!hasMush) {
               addRes('mushroom', t.x, t.y);
@@ -596,7 +624,7 @@
     }
 
     // 5) Spawners: Trees, Plants, Aphids, Leaves
-    if (Math.random() < 0.08 * simSpeed) {
+    if (rng() < 0.08 * simSpeed) {
       if (resources.filter(r => r.kind === 'leaf').length < 35) {
         addRes('leaf', irand(5, W - 5), SURFACE_WALK_Y);
       }
@@ -606,7 +634,7 @@
     }
 
     // Fix 6: mealworm breeding — cap at 12
-    if (Math.random() < 0.02 * simSpeed) {
+    if (rng() < 0.02 * simSpeed) {
       const mealworms = mobs.filter(m => m.type === 'mealworm' && !m.dead);
       if (mealworms.length < 12) {
         spawnMob('mealworm', irand(5, W - 5), SURFACE_WALK_Y + irand(2, 8));
@@ -691,14 +719,14 @@
           const _canWarrior = c.foreignFed > 0 || _colSize >= 60 || gameSeconds >= 300;
 
           // Produce Alates (Virgin Queens & Males) when food surplus > nuptialSurplusReq
-          if (c.foodStore > CFG.nuptialSurplusReq && Math.random() < 0.25) {
-            if (Math.random() < 0.5) {
+          if (c.foodStore > CFG.nuptialSurplusReq && rng() < 0.25) {
+            if (rng() < 0.5) {
               egg.willBe = CASTE.VIRGIN_QUEEN;
             } else {
               egg.willBe = CASTE.MALE;
             }
             c.alatesProduced++;
-          } else if (_canWarrior && c.foodStore > 20 && Math.random() < 0.12) {
+          } else if (_canWarrior && c.foodStore > 20 && rng() < 0.12) {
             egg.willBe = CASTE.WARRIOR;
           } else {
             egg.willBe = CASTE.WORKER;
@@ -765,7 +793,7 @@
         } else if (a.caste === CASTE.MALE) {
           // Male flies around searching for virgin queen
           a.x = wrapX(a.x + choice([-1, 1]));
-          if (Math.random() < 0.05) a.dead = true;
+          if (rng() < 0.05) a.dead = true;
         }
       }
       return;
@@ -802,19 +830,19 @@
 
       if (foodNeed) {
         // High priority: Forage / Harvest Mushrooms / Milk Aphids
-        if (mushChambersDug && Math.random() < 0.4) {
+        if (mushChambersDug && rng() < 0.4) {
           a.role = ROLE.FARM_MUSHROOM;
-        } else if (milkChambersDug && Math.random() < 0.4) {
+        } else if (milkChambersDug && rng() < 0.4) {
           a.role = ROLE.MILK_APHID;
         } else {
           a.role = ROLE.FORAGE;
         }
-      } else if (unDugTarget && Math.random() < CFG.diggerFrac) {
+      } else if (unDugTarget && rng() < CFG.diggerFrac) {
         // Dig Tunnel Array
         a.role = ROLE.DIG;
-      } else if (mushChambersDug && Math.random() < CFG.farmerFrac) {
+      } else if (mushChambersDug && rng() < CFG.farmerFrac) {
         a.role = ROLE.FARM_MUSHROOM;
-      } else if (milkChambersDug && Math.random() < CFG.milkerFrac) {
+      } else if (milkChambersDug && rng() < CFG.milkerFrac) {
         a.role = ROLE.MILK_APHID;
       } else {
         a.role = ROLE.FORAGE;
@@ -1019,7 +1047,7 @@
       if (passableForAnt(nx, ny)) {
         a.x = nx; a.y = ny;
         return;
-      } else if (isSoil(nx, ny) && a.caste === CASTE.WORKER && Math.random() < 0.25) {
+      } else if (isSoil(nx, ny) && a.caste === CASTE.WORKER && rng() < 0.25) {
         setTile(nx, ny, TILE.TUNNEL);
         a.x = nx; a.y = ny;
         return;
@@ -1079,7 +1107,7 @@
   function stepMob(m) {
     if (m.type === 'aphid') {
       // Aphids wander on plants/soil and produce honeydew milk
-      if (Math.random() < 0.3) m.x = wrapX(m.x + choice([-1, 1]));
+      if (rng() < 0.3) m.x = wrapX(m.x + choice([-1, 1]));
     } else {
       m.x = wrapX(m.x + choice([-1, 1]));
     }
@@ -1131,7 +1159,7 @@
         water[i] = 0;
         rootMass[i] = 0;
         fertility[i] = 0;
-        if (y > surfaceY + 12 && Math.random() < 0.04) tile[i] = TILE.ROCKS;
+        if (y > surfaceY + 12 && rng() < 0.04) tile[i] = TILE.ROCKS;
       }
     }
 
@@ -1144,7 +1172,7 @@
 
     // Surface flora
     for (let x = 0; x < W; x += 5) {
-      if (Math.random() < 0.6) plants.push({ x, e: 10 });
+      if (rng() < 0.6) plants.push({ x, e: 10 });
     }
   }
 
@@ -1371,6 +1399,9 @@
     const stAnts = document.getElementById('stat_orange');
     const stMush = document.getElementById('diag_food');
     const stTunnel = document.getElementById('diag_tunnel');
+    const stSeed = document.getElementById('stat_seed');
+
+    if (stSeed) stSeed.textContent = String(_seed);
 
     if (stAnts) stAnts.textContent = `Ants: ${totalAnts} (${totalEggs}🥚) | Colonies: ${activeColoniesCount}`;
     if (stMush) stMush.textContent = `🍄 ${totalMushrooms} | 🥛 ${totalMilk}`;
@@ -1413,7 +1444,9 @@
     runSimulation: (runs, steps) => runBalanceLabSimulation(runs, steps),
     reset: () => resetWorld(),
     setSpeed: (spd) => { simSpeed = spd; },
-    getColonies: () => colonies
+    getColonies: () => colonies,
+    setSeed: (n) => { const s = setSeed(n); resetWorld(); return s; },
+    getSeed: () => getSeed()
   };
 
 })();
