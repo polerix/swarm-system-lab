@@ -238,6 +238,26 @@
     width: 100px;
   }
 
+  /* Instrumentation readout (off by default; engine toggles display) */
+  #perfReadout {
+    display: none;
+    position: fixed;
+    left: 20px;
+    bottom: 20px;
+    z-index: 90;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre;
+    color: #a8d8ff;
+    background: rgba(5, 6, 10, 0.72);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    pointer-events: none;
+    max-width: 46ch;
+  }
+
   .stat-row {
     display: flex;
     justify-content: space-between;
@@ -250,6 +270,8 @@
 
 <body>
   <canvas id="c"></canvas>
+
+  <div id="perfReadout">instrumentation off</div>
 
   <div id="sphereWrapper">
     <div class="sphere" id="menuSphere">
@@ -320,6 +342,13 @@
           <div class="stat-row" style="color:#a8d8ff"><span>👑✨ Alates & Nuptial Flights</span> <span id="diag_tunnel">—</span></div>
           <div style="border-top:1px solid var(--glass-border);margin:12px 0 8px;padding-top:10px;font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em">Run Identity</div>
           <div class="stat-row" style="color:#c7b8ff"><span>🎲 RNG Seed</span> <span id="stat_seed" style="font-family:monospace">—</span></div>
+
+          <div style="border-top:1px solid var(--glass-border);margin:12px 0 8px;padding-top:10px;font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em">Instrumentation</div>
+          <div class="setting-row">
+            <span>Perf readout</span>
+            <label class="switch"><input type="checkbox" id="chk_perf"><span class="slider"></span></label>
+          </div>
+          <div style="font-size:10px;opacity:0.6;line-height:1.4;">Off by default. Shows FPS, frame time, sim steps/frame, entity counts, swallowed tick errors, and JS heap where the browser reports it (Chromium only).</div>
         </div>
 
         <!-- TAB: STATS / COLONIES -->
@@ -463,6 +492,18 @@
     if (btnResetWorld) {
       btnResetWorld.addEventListener('click', () => {
         if (window.SWARM_LAB) window.SWARM_LAB.reset();
+      });
+    }
+
+    // Instrumentation toggle. Unchecked in markup, so off on load. The engine
+    // owns the readout element's visibility.
+    const chkPerf = document.getElementById('chk_perf');
+    if (chkPerf) {
+      chkPerf.checked = false;
+      chkPerf.addEventListener('change', () => {
+        if (window.SWARM_LAB && window.SWARM_LAB.setInstrumentation) {
+          window.SWARM_LAB.setInstrumentation(chkPerf.checked);
+        }
       });
     }
 

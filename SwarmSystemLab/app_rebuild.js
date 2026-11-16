@@ -1570,6 +1570,86 @@
     autoBalance(FIXED_DT);
   }
 
+  /* ---------------------------------------------------------
+     Instrumentation readout. Off by default; when off, the only cost is one
+     boolean test per frame and the readout element stays display:none.
+
+     Honesty rule for heap: performance.memory is Chromium-only and is also
+     absent on cross-origin-isolated pages and behind some flags. When it is
+     not there the readout says so. It never prints a substitute or a proxy
+     figure -- a made-up number is worse than a missing one.
+  --------------------------------------------------------- */
+  const perf = {
+    on: false,
+    el: null,
+    frames: 0,
+    sumFrameMs: 0,
+    sumSteps: 0,
+    lastSteps: 0,
+    fps: 0,
+    avgFrameMs: 0,
+    avgSteps: 0,
+    windowStart: 0,
+    text: ''
+  };
+
+  const PERF_WINDOW_MS = 500; // how often the readout recomputes
+
+  function heapInfo() {
+    const m = (typeof performance !== 'undefined') ? performance.memory : null;
+    if (!m || typeof m.usedJSHeapSize !== 'number') return null;
+    return m.usedJSHeapSize;
+  }
+
+  function setInstrumentation(on) {
+    perf.on = !!on;
+    if (!perf.el && typeof document !== 'undefined') perf.el = document.getElementById('perfReadout');
+    if (perf.el && perf.el.style) perf.el.style.display = perf.on ? 'block' : 'none';
+    // Start the averaging window fresh so the first reading is not polluted
+    // by however long the readout was switched off.
+    perf.frames = 0;
+    perf.sumFrameMs = 0;
+    perf.sumSteps = 0;
+    perf.windowStart = 0;
+    return perf.on;
+  }
+
+  function perfSample(nowMs, frameMs, steps) {
+    perf.lastSteps = steps;
+    if (!perf.on) return;
+
+    perf.frames++;
+    perf.sumFrameMs += frameMs;
+    perf.sumSteps += steps;
+
+    if (!perf.windowStart) { perf.windowStart = nowMs; return; }
+    const span = nowMs - perf.windowStart;
+    if (span < PERF_WINDOW_MS) return;
+
+    perf.fps = (perf.frames * 1000) / span;
+    perf.avgFrameMs = perf.sumFrameMs / perf.frames;
+    perf.avgSteps = perf.sumSteps / perf.frames;
+    perf.frames = 0;
+    perf.sumFrameMs = 0;
+    perf.sumSteps = 0;
+    perf.windowStart = nowMs;
+
+    const used = heapInfo();
+    const lines = [
+      `fps          ${perf.fps.toFixed(1)}`,
+      `frame        ${perf.avgFrameMs.toFixed(2)} ms avg`,
+      `sim steps    ${perf.avgSteps.toFixed(2)} /frame (last ${perf.lastSteps})`,
+      `ants         ${liveCounts.ants} (+${liveCounts.eggs} eggs)`,
+      `resources    ${resources.length}`,
+      `errors       ${simErrors.count}${simErrors.count ? ` — first: ${simErrors.first}` : ''}`,
+      `heap         ${used === null
+        ? 'not available (performance.memory is Chromium-only)'
+        : (used / 1048576).toFixed(1) + ' MB used'}`
+    ];
+    perf.text = lines.join('\n');
+    if (perf.el) perf.el.textContent = perf.text;
+  }
+
   function loop(t) {
     // First frame: establish the clock, advance nothing. The old code left
     // lastT at 0, which handed frame one a full 0.1 s of simulation.
@@ -1596,6 +1676,7 @@
 
       draw();
       updateUI();
+      perfSample(t, dt * 1000, steps);
     } catch (e) {
       // Still logged, still non-fatal -- but no longer invisible.
       recordSimError(e);
@@ -1711,6 +1792,21 @@
     getSeed: () => getSeed(),
     determinismCheck: (seed, ticks) => determinismCheck(seed, ticks),
     speedCheck: (seed, frames, speed) => speedCheck(seed, frames, speed),
+    setInstrumentation: (on) => setInstrumentation(on),
+    getInstrumentation: () => ({
+      on: perf.on,
+      fps: perf.on ? perf.fps : null,
+      avgFrameMs: perf.on ? perf.avgFrameMs : null,
+      stepsPerFrame: perf.on ? perf.avgSteps : null,
+      ants: liveCounts.ants,
+      eggs: liveCounts.eggs,
+      resources: resources.length,
+      errorCount: simErrors.count,
+      firstError: simErrors.first,
+      // null means "this browser does not report it", not "zero".
+      usedJSHeapSize: heapInfo(),
+      text: perf.text
+    }),
     getErrors: () => ({ count: simErrors.count, first: simErrors.first, firstAtGS: simErrors.firstAtGS, last: simErrors.last }),
     clearErrors: () => { simErrors.count = 0; simErrors.first = null; simErrors.firstAtGS = null; simErrors.last = null; }
   };
