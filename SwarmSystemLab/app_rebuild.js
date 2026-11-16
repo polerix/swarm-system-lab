@@ -1140,6 +1140,8 @@
     }
   }
 
+  // Full reset. Everything that carries state across a run is cleared here,
+  // including the RNG stream, or two runs from the same seed would differ.
   function resetWorld() {
     ants.length = 0;
     mobs.length = 0;
@@ -1147,6 +1149,17 @@
     plants.length = 0;
     trees.length = 0;
     colonies.length = 0;
+
+    nextId = 1;
+    gameSeconds = 0;
+    mushGrowthTimer = 0;
+    aphidMilkTimer = 0;
+    balanceTimer = 0;
+    pherFood.fill(0);
+    weather.kind = WEATHER.CLEAR;
+    weather.untilGS = 0;
+
+    _rng = mulberry32(_seed);
     genWorld();
   }
 
@@ -1464,6 +1477,99 @@
     requestAnimationFrame(loop);
   }
 
+  /* =========================================================
+     14a) Determinism Check
+     Acceptance test for the seeded RNG and the fixed timestep.
+  ========================================================= */
+  // FNV-1a style rolling 32-bit hash. Cheap, order-sensitive, plenty to
+  // detect a single ant one tile out of place.
+  function makeHash() {
+    let h = 2166136261 >>> 0;
+    const mixInt = (v) => {
+      h = (h ^ (v | 0)) >>> 0;
+      h = Math.imul(h, 16777619) >>> 0;
+    };
+    return {
+      int: mixInt,
+      // Floats are quantised so 1e-15 drift does not read as divergence,
+      // while a real behavioural difference still does.
+      num: (v) => mixInt(Math.round((Number(v) || 0) * 1000)),
+      str: (s) => { const t = String(s); for (let i = 0; i < t.length; i++) mixInt(t.charCodeAt(i)); },
+      value: () => h >>> 0
+    };
+  }
+
+  function snapshot(seed, ticks) {
+    const h = makeHash();
+    h.int(ants.length);
+    h.int(resources.length);
+
+    for (const a of ants) {
+      h.int(a.x); h.int(a.y); h.num(a.hp); h.int(a.role);
+    }
+    for (const r of resources) {
+      h.int(r.x); h.int(r.y); h.str(r.kind);
+    }
+
+    const colonyState = colonies.map(c => {
+      h.int(c.team);
+      h.num(c.foodStore);
+      h.int(c.tunnelsDugCount);
+      return { team: c.team, food: Math.round(c.foodStore * 1000) / 1000, tunnels: c.tunnelsDugCount };
+    });
+
+    return {
+      seed,
+      ticks,
+      ants: ants.length,
+      resources: resources.length,
+      colonies: colonyState,
+      hash: h.value()
+    };
+  }
+
+  // N fixed ticks, headless, no rendering. Speed-independent by construction:
+  // this path does not touch the accumulator at all.
+  function determinismCheck(seed, ticks = 600) {
+    setSeed(seed);
+    resetWorld();
+    for (let i = 0; i < ticks; i++) stepFixed();
+    return snapshot(seed, ticks);
+  }
+
+  // Drives the real accumulator for `frames` rAF frames of `frameDt` seconds
+  // at the given simSpeed. This is how 1x vs 3x divergence is measured: the
+  // same wall-clock time, a different number of sim steps inside it.
+  function speedCheck(seed, frames = 600, speed = 1.0, frameDt = FIXED_DT) {
+    const prevSpeed = simSpeed;
+    setSeed(seed);
+    resetWorld();
+    acc = 0;
+    simSpeed = speed;
+
+    let totalSteps = 0;
+    for (let f = 0; f < frames; f++) {
+      acc += frameDt * simSpeed;
+      let steps = 0;
+      while (acc >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+        stepFixed();
+        acc -= FIXED_DT;
+        steps++;
+      }
+      if (acc >= FIXED_DT * MAX_STEPS_PER_FRAME) acc = 0;
+      totalSteps += steps;
+    }
+
+    simSpeed = prevSpeed;
+    const snap = snapshot(seed, totalSteps);
+    snap.frames = frames;
+    snap.speed = speed;
+    return snap;
+  }
+
+  /* =========================================================
+     15) Main Application Loop & Bindings
+  ========================================================= */
   // Initialize Simulation & Expose Lab Interface
   genWorld();
   requestAnimationFrame(loop);
@@ -1474,7 +1580,9 @@
     setSpeed: (spd) => { simSpeed = spd; },
     getColonies: () => colonies,
     setSeed: (n) => { const s = setSeed(n); resetWorld(); return s; },
-    getSeed: () => getSeed()
+    getSeed: () => getSeed(),
+    determinismCheck: (seed, ticks) => determinismCheck(seed, ticks),
+    speedCheck: (seed, frames, speed) => speedCheck(seed, frames, speed)
   };
 
 })();
