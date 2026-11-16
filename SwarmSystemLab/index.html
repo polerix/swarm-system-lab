@@ -331,7 +331,16 @@
           <input type="range" id="rng_speed" min="0.5" max="5.0" step="0.5" value="1.0" style="width:100%;margin-bottom:12px;">
 
           <div style="font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Diagnostic Report</div>
-          <div id="labReportOut" style="font-family:monospace;font-size:11px;line-height:1.45;white-space:pre-wrap;background:rgba(0,0,0,0.35);padding:10px;border-radius:8px;border:1px solid var(--glass-border);color:#a8d8ff;">Click 'Run Balance Lab Simulation' to execute fast-forward simulation runs and generate auto-tuning reports.</div>
+          <div id="labReportOut" style="font-family:monospace;font-size:11px;line-height:1.45;white-space:pre-wrap;background:rgba(0,0,0,0.35);padding:10px;border-radius:8px;border:1px solid var(--glass-border);color:#a8d8ff;">Click 'Run Balance Lab Simulation' to execute fast-forward simulation runs. The run reports proposed parameter changes; nothing is applied until you confirm.</div>
+
+          <div id="labTuningBox" style="display:none;margin-top:12px;">
+            <div style="font-size:11px;color:var(--highlight);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Proposed Tuning</div>
+            <div id="labProposed" style="font-family:monospace;font-size:11px;line-height:1.45;white-space:pre-wrap;background:rgba(255,210,95,0.08);padding:10px;border-radius:8px;border:1px solid rgba(255,210,95,0.35);color:#ffd25f;">—</div>
+            <div style="display:flex;gap:8px;margin-top:8px;">
+              <button id="btnApplyTuning" style="flex:1;padding:8px;background:rgba(163,255,95,0.15);border:1px solid #a3ff5f;color:var(--text);border-radius:6px;cursor:pointer;font-size:12px;">Apply to live sim</button>
+              <button id="btnRevertTuning" style="flex:1;padding:8px;background:rgba(255,92,122,0.15);border:1px solid var(--danger);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px;" disabled>Revert</button>
+            </div>
+          </div>
         </div>
 
         <!-- TAB: STATUS -->
@@ -465,17 +474,53 @@
     const rngSpeed = document.getElementById('rng_speed');
     const valSpeed = document.getElementById('val_speed');
 
+    const labTuningBox = document.getElementById('labTuningBox');
+    const labProposed = document.getElementById('labProposed');
+    const btnApplyTuning = document.getElementById('btnApplyTuning');
+    const btnRevertTuning = document.getElementById('btnRevertTuning');
+    let pendingProposal = null;
+
+    function fmtTuning(obj) {
+      const k = Object.keys(obj);
+      if (!k.length) return '(none)';
+      return k.map(n => `  ${n}: ${obj[n]}`).join('\n');
+    }
+
+    function syncRevertButton() {
+      if (!btnRevertTuning) return;
+      const can = !!(window.SWARM_LAB && window.SWARM_LAB.canRevertTuning && window.SWARM_LAB.canRevertTuning());
+      btnRevertTuning.disabled = !can;
+    }
+
     if (btnRunBalanceLab) {
-      btnRunBalanceLab.addEventListener('click', () => {
+      btnRunBalanceLab.addEventListener('click', async () => {
         if (!window.SWARM_LAB) return;
-        labReportOut.textContent = "🧪 Running fast-forward simulations...\nEvaluating tunnel rates, mushroom yields, milk production, and nuptial flights...";
-        
-        setTimeout(() => {
-          const r = window.SWARM_LAB.runSimulation(3, 4000);
-          labReportOut.textContent = 
+        if (window.SWARM_LAB.isLabRunning && window.SWARM_LAB.isLabRunning()) return;
+
+        btnRunBalanceLab.disabled = true;
+        if (labTuningBox) labTuningBox.style.display = 'none';
+        pendingProposal = null;
+        labReportOut.textContent = "🧪 Running fast-forward simulations…\nStarting.";
+
+        const onProgress = (p) => {
+          const pct = Math.round(p.fraction * 100);
+          labReportOut.textContent =
+            `🧪 Running fast-forward simulations…\n` +
+            `Run ${p.run}/${p.runs} — step ${p.step}/${p.stepsPerRun}\n` +
+            `Overall ${p.doneSteps}/${p.totalSteps} ticks (${pct}%)\n` +
+            `Invariant violations so far: ${p.violations}`;
+        };
+
+        try {
+          const r = await window.SWARM_LAB.runSimulation(3, 4000, onProgress);
+          const inv = r.invariants.map(i => `  [${i.pass ? 'PASS' : 'FAIL'}] ${i.name}`).join('\n');
+          const shown = r.violations.slice(0, 5).map(v => `  • ${v}`).join('\n');
+
+          labReportOut.textContent =
             `=== BALANCE LAB DIAGNOSTIC REPORT ===\n` +
             `Timestamp: ${r.timestamp}\n` +
             `Autonomous Stability Score: ${r.stabilityScore}%\n` +
+            `Ticks: ${r.stepsRun} @ ${r.dtPerStep.toFixed(5)}s (same fixed step as the live sim)\n` +
             `-----------------------------------\n` +
             `Avg Tunnels Dug: ${r.avgTunnelsDug}\n` +
             `Avg Mushrooms Harvested: ${r.avgMushroomsHarvested} 🍄\n` +
@@ -484,8 +529,54 @@
             `Avg Nuptial Flights: ${r.avgNuptialFlights} 🚀\n` +
             `Active Colonies Founded: ${r.totalColoniesFounded}\n` +
             `-----------------------------------\n` +
-            `Status: Parameters auto-tuned for full autonomous multi-colony sustainment!`;
-        }, 100);
+            `INVARIANTS: ${r.invariantsPass ? 'all pass' : 'FAILURES'}\n${inv}\n` +
+            (r.violations.length
+              ? `First violations (${r.violations.length} total):\n${shown}\n`
+              : '') +
+            `-----------------------------------\n` +
+            `No parameters were changed. Proposals below require confirmation.`;
+
+          pendingProposal = r.proposed;
+          if (labTuningBox && labProposed) {
+            const n = Object.keys(r.proposed || {}).length;
+            labProposed.textContent =
+              `current:\n${fmtTuning(r.current)}\n\n` +
+              (n ? `proposed:\n${fmtTuning(r.proposed)}` : 'proposed:\n  (no change suggested)');
+            if (btnApplyTuning) btnApplyTuning.disabled = !n;
+            labTuningBox.style.display = 'block';
+          }
+          syncRevertButton();
+        } catch (e) {
+          labReportOut.textContent = `Balance Lab failed: ${e && e.message ? e.message : e}`;
+        } finally {
+          btnRunBalanceLab.disabled = false;
+        }
+      });
+    }
+
+    if (btnApplyTuning) {
+      btnApplyTuning.addEventListener('click', () => {
+        if (!window.SWARM_LAB || !pendingProposal) return;
+        const n = Object.keys(pendingProposal).length;
+        if (!n) return;
+        const lines = Object.keys(pendingProposal).map(k => `${k} → ${pendingProposal[k]}`).join('\n');
+        if (!confirm(`Apply these tuning changes to the live simulation?\n\n${lines}\n\nRevert is available afterwards.`)) return;
+        const res = window.SWARM_LAB.applyTuning(pendingProposal);
+        labProposed.textContent =
+          `APPLIED:\n${fmtTuning(res.applied)}\n\nwas:\n${fmtTuning(res.from)}`;
+        btnApplyTuning.disabled = true;
+        syncRevertButton();
+      });
+    }
+
+    if (btnRevertTuning) {
+      btnRevertTuning.addEventListener('click', () => {
+        if (!window.SWARM_LAB) return;
+        const res = window.SWARM_LAB.revertTuning();
+        if (!res.reverted) return;
+        labProposed.textContent = `REVERTED to:\n${fmtTuning(res.values)}`;
+        btnApplyTuning.disabled = !(pendingProposal && Object.keys(pendingProposal).length);
+        syncRevertButton();
       });
     }
 

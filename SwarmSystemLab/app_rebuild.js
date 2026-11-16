@@ -1298,7 +1298,107 @@
   /* =========================================================
      11) Balance Lab Simulation & Report Runner
   ========================================================= */
-  function runBalanceLabSimulation(numRuns = 3, stepsPerRun = 5000) {
+  // Yield control so a 12,000-tick lab run does not freeze the tab. setTimeout
+  // in the browser; in the headless harness there is no setTimeout in the vm
+  // context, so this degrades to a resolved promise and the run stays
+  // synchronous. Either way the step sequence is identical.
+  function yieldToHost() {
+    if (typeof setTimeout === 'function') return new Promise(r => setTimeout(r, 0));
+    return Promise.resolve();
+  }
+
+  // Set while the lab is running. loop() checks it and advances nothing, so
+  // the live rAF loop cannot interleave its own stepFixed() calls with the
+  // lab's between yields -- which would corrupt both.
+  let labRunning = false;
+
+  const LAB_CHUNK_STEPS = 400; // steps between yields
+
+  // The three invariants the lab asserts. Checked periodically, not only at
+  // the end, so a transient violation that heals is still reported.
+  function checkInvariants(violations, runIndex, step) {
+    const note = (what) => {
+      if (violations.length < 20) violations.push(`run ${runIndex + 1} step ${step}: ${what}`);
+    };
+
+    for (const c of colonies) {
+      if (c.foodStore < 0) note(`colony team ${c.team} foodStore ${c.foodStore.toFixed(3)} < 0`);
+      if ((c.livePop || 0) < 0) note(`colony team ${c.team} population ${c.livePop} < 0`);
+      if (c.naniticCount < 0) note(`colony team ${c.team} naniticCount ${c.naniticCount} < 0`);
+      if (c.workerCount < 0) note(`colony team ${c.team} workerCount ${c.workerCount} < 0`);
+    }
+    if (ants.length < 0) note(`ants.length ${ants.length} < 0`);
+
+    for (const a of ants) {
+      if (!(a.y >= 0 && a.y < H)) note(`ant ${a.id} y=${a.y} outside [0,${H})`);
+    }
+    for (const m of mobs) {
+      if (!(m.y >= 0 && m.y < H)) note(`mob ${m.id} y=${m.y} outside [0,${H})`);
+    }
+    for (const r of resources) {
+      if (!(r.y >= 0 && r.y < H)) note(`resource ${r.id} y=${r.y} outside [0,${H})`);
+    }
+  }
+
+  /* ---------------------------------------------------------
+     Proposed tuning.
+     The lab used to write straight into CFG at the end of every run, which
+     meant looking at a report silently changed the live simulation. It now
+     computes the same values, reports them, and waits for an explicit
+     applyTuning() call. The pre-tuning values are kept so revertTuning()
+     can put them back.
+
+     The thresholds and step sizes are unchanged from before -- this commit
+     changes when they are applied, not what they are.
+  --------------------------------------------------------- */
+  const TUNING_KEYS = ['diggerFrac', 'mushYieldRate', 'milkYieldRate'];
+  let cfgBaseline = null; // captured on the first apply, so revert always works
+
+  function proposeTuning(report) {
+    const p = {};
+    if (report.avgTunnelsDug < 30) p.diggerFrac = Math.min(0.6, CFG.diggerFrac + 0.05);
+    if (report.avgMushroomsHarvested < 5) p.mushYieldRate = Math.min(3.0, CFG.mushYieldRate + 0.3);
+    if (report.avgMilkHarvested < 5) p.milkYieldRate = Math.min(3.0, CFG.milkYieldRate + 0.3);
+    // Drop no-ops: a value already at its ceiling is not a proposal.
+    for (const k of Object.keys(p)) if (p[k] === CFG[k]) delete p[k];
+    return p;
+  }
+
+  function applyTuning(proposed) {
+    if (!proposed) return { applied: {}, from: {} };
+    const keys = Object.keys(proposed).filter(k => TUNING_KEYS.includes(k));
+    if (!keys.length) return { applied: {}, from: {} };
+    if (!cfgBaseline) {
+      cfgBaseline = {};
+      for (const k of TUNING_KEYS) cfgBaseline[k] = CFG[k];
+    }
+    const from = {};
+    const applied = {};
+    for (const k of keys) {
+      from[k] = CFG[k];
+      CFG[k] = proposed[k];
+      applied[k] = CFG[k];
+    }
+    return { applied, from };
+  }
+
+  function revertTuning() {
+    if (!cfgBaseline) return { reverted: false, values: null };
+    const values = {};
+    for (const k of TUNING_KEYS) { CFG[k] = cfgBaseline[k]; values[k] = CFG[k]; }
+    cfgBaseline = null;
+    return { reverted: true, values };
+  }
+
+  function currentTuning() {
+    const out = {};
+    for (const k of TUNING_KEYS) out[k] = CFG[k];
+    return out;
+  }
+
+  async function runBalanceLabSimulation(numRuns = 3, stepsPerRun = 5000, onProgress = null) {
+    if (labRunning) throw new Error('Balance Lab is already running');
+    labRunning = true;
     const report = {
       timestamp: new Date().toLocaleTimeString(),
       runs: numRuns,
@@ -1318,19 +1418,54 @@
     let totalAlates = 0;
     let totalFlights = 0;
 
-    for (let r = 0; r < numRuns; r++) {
-      resetWorld();
-      for (let s = 0; s < stepsPerRun; s++) {
-        tickSimulation(0.05);
-      }
+    const violations = [];
+    const totalSteps = numRuns * stepsPerRun;
+    let doneSteps = 0;
 
-      for (const c of colonies) {
-        totalTunnels += c.tunnelsDugCount;
-        totalMush += c.mushroomStore;
-        totalMilk += c.milkStore;
-        totalAlates += c.alatesProduced;
-        totalFlights += c.nuptialFlights;
+    try {
+      for (let r = 0; r < numRuns; r++) {
+        resetWorld();
+
+        for (let s = 0; s < stepsPerRun; s++) {
+          // The lab now advances the world through the same stepFixed() the
+          // live rAF loop and the determinism harness use, instead of calling
+          // tickSimulation(0.05) directly. The lab's output is what the live
+          // sim gets tuned on, so the two must not step differently -- the old
+          // path used a 0.05 s tick and skipped autoBalance() entirely, so it
+          // was tuning against a world that never respawned a dead colony.
+          stepFixed();
+          doneSteps++;
+
+          if ((s % LAB_CHUNK_STEPS) === LAB_CHUNK_STEPS - 1 || s === stepsPerRun - 1) {
+            checkInvariants(violations, r, s + 1);
+            if (onProgress) {
+              try {
+                onProgress({
+                  run: r + 1,
+                  runs: numRuns,
+                  step: s + 1,
+                  stepsPerRun,
+                  doneSteps,
+                  totalSteps,
+                  fraction: doneSteps / totalSteps,
+                  violations: violations.length
+                });
+              } catch (e) { recordSimError(e); }
+            }
+            await yieldToHost();
+          }
+        }
+
+        for (const c of colonies) {
+          totalTunnels += c.tunnelsDugCount;
+          totalMush += c.mushroomStore;
+          totalMilk += c.milkStore;
+          totalAlates += c.alatesProduced;
+          totalFlights += c.nuptialFlights;
+        }
       }
+    } finally {
+      labRunning = false;
     }
 
     report.avgTunnelsDug = Math.round(totalTunnels / numRuns);
@@ -1341,10 +1476,21 @@
     report.totalColoniesFounded = colonies.length;
     report.stabilityScore = Math.min(100, Math.round((report.avgMushroomsHarvested + report.avgMilkHarvested + report.avgNuptialFlights * 10) * 1.5));
 
-    // Auto-tune parameters based on results
-    if (report.avgTunnelsDug < 30) CFG.diggerFrac = Math.min(0.6, CFG.diggerFrac + 0.05);
-    if (report.avgMushroomsHarvested < 5) CFG.mushYieldRate = Math.min(3.0, CFG.mushYieldRate + 0.3);
-    if (report.avgMilkHarvested < 5) CFG.milkYieldRate = Math.min(3.0, CFG.milkYieldRate + 0.3);
+    // Invariant results, reported pass/fail per invariant.
+    report.invariants = [
+      { name: 'population never negative', pass: !violations.some(v => /population|Count/.test(v)) },
+      { name: 'foodStore never negative', pass: !violations.some(v => /foodStore/.test(v)) },
+      { name: `every entity inside 0 <= y < ${H}`, pass: !violations.some(v => /outside \[0,/.test(v)) }
+    ];
+    report.invariantsPass = report.invariants.every(i => i.pass);
+    report.violations = violations;
+    report.stepsRun = doneSteps;
+    report.dtPerStep = FIXED_DT;
+
+    // Proposed, NOT applied. CFG is untouched by this function.
+    report.current = currentTuning();
+    report.proposed = proposeTuning(report);
+    report.tuningApplied = false;
 
     return report;
   }
@@ -1660,6 +1806,16 @@
 
     // simSpeed is an accumulator rate, not a step count. Fractional speeds
     // work, and speed does not fight the stall guard below.
+    // While the Balance Lab is running it owns the world. The lab yields to
+    // the host between chunks, so without this guard the live loop would
+    // interleave its own fixed steps with the lab's and corrupt both.
+    if (labRunning) {
+      acc = 0;
+      try { draw(); } catch (e) { recordSimError(e); console.error("Simulation error:", e); }
+      requestAnimationFrame(loop);
+      return;
+    }
+
     acc += dt * simSpeed;
 
     let steps = 0;
@@ -1784,7 +1940,15 @@
   requestAnimationFrame(loop);
 
   window.SWARM_LAB = {
-    runSimulation: (runs, steps) => runBalanceLabSimulation(runs, steps),
+    // Returns a Promise now: the lab yields between chunks so the tab stays
+    // responsive through 12,000 ticks. It no longer writes to CFG -- the
+    // report carries `proposed`, and applying it takes an explicit call.
+    runSimulation: (runs, steps, onProgress) => runBalanceLabSimulation(runs, steps, onProgress),
+    isLabRunning: () => labRunning,
+    applyTuning: (proposed) => applyTuning(proposed),
+    revertTuning: () => revertTuning(),
+    getTuning: () => currentTuning(),
+    canRevertTuning: () => !!cfgBaseline,
     reset: () => resetWorld(),
     setSpeed: (spd) => { simSpeed = spd; },
     getColonies: () => colonies,
