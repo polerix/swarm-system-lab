@@ -238,7 +238,35 @@
      5) Colony Architecture Planner
      - Defines structured shaft, chambers, & galleries
   ========================================================= */
+  // What the plan actually depends on
+  // ---------------------------------
+  // buildColonyArchitecturePlan reads exactly three things: colony.homeX,
+  // colony.homeY, and the module constants SURFACE_WALK_Y / W. It reads no
+  // tile, no entity, no RNG. And homeX/homeY are written in exactly one place
+  // — createColony — and never again (respawnColony reuses them, the nuptial
+  // path creates a *new* colony rather than moving one). So a colony's plan is
+  // fixed for that colony's whole lifetime.
+  //
+  // The invalidation key is therefore the home coordinates. Deliberately NOT
+  // a tick counter and NOT the tile state: digging changes which plan cells
+  // are still soil, but not the plan, and every caller already filters the
+  // plan against live tile state itself (getNextDigTargetForAnt, the mushroom
+  // tick, the idle-role check). Keying on tiles would rebuild ~400 objects for
+  // no change in the result.
+  //
+  // Callers must treat the returned array and its entries as read-only. They
+  // currently do: only .filter / .find / .some / for-of, no writes to p.x,
+  // p.y or p.type and no push/splice on the array.
   function getColonyArchitecturePlan(colony) {
+    const key = colony.homeX + ':' + colony.homeY;
+    if (colony._planCache && colony._planKey === key) return colony._planCache;
+    const plan = buildColonyArchitecturePlan(colony);
+    colony._planCache = plan;
+    colony._planKey = key;
+    return plan;
+  }
+
+  function buildColonyArchitecturePlan(colony) {
     const plan = []; // {x, y, type: 'shaft'|'royal'|'nursery'|'mushroom'|'milk'|'pantry'}
     const hx = colony.homeX;
     const hy = colony.homeY;
@@ -369,6 +397,32 @@
     return c;
   }
 
+  // stepAnt used to run colonies.find(cc => cc.team === a.team) on every ant,
+  // every step. Teams are unique (allocTeam guarantees it), so that find has
+  // exactly one answer and it only changes when the ant's team changes or the
+  // colony goes away. Cache it on the ant and validate cheaply.
+  //
+  // Colony-destroyed case: nothing currently splices `colonies`, but a stale
+  // reference would be a silent, hard-to-find bug if that ever changed, so the
+  // guard is explicit rather than assumed. destroyColony() below is the single
+  // supported removal path; resetWorld() empties both arrays together, so no
+  // ant can outlive its colony there either.
+  function colonyForAnt(a) {
+    const cached = a.colonyRef;
+    if (cached && !cached.destroyed && cached.team === a.team) return cached;
+    const c = colonies.find(cc => cc.team === a.team) || null;
+    a.colonyRef = c;
+    return c;
+  }
+
+  function destroyColony(c) {
+    const i = colonies.indexOf(c);
+    if (i < 0) return false;
+    c.destroyed = true;      // makes every cached reference to it invalid
+    colonies.splice(i, 1);
+    return true;
+  }
+
   function allocTeam() {
     let t = 0;
     while (colonies.some(c => c.team === t)) t++;
@@ -424,7 +478,10 @@
       life: 2000 + rng() * 500,
       bornAtGS: gameSeconds,
       dieAtGS: gameSeconds + (45 * GS_DAY),
-      mem: {}
+      mem: {},
+      // Colony reference cached at spawn; re-resolved by colonyForAnt() if the
+      // ant's team changes (nuptial founding) or the colony is destroyed.
+      colonyRef: colonies.find(cc => cc.team === team) || null
     };
 
     if (caste === CASTE.QUEEN) {
@@ -508,8 +565,28 @@
     return m;
   }
 
+  /* ---------------------------------------------------------
+     Live counts for the HUD.
+     updateUI() used to build six filter arrays every frame. These counters
+     carry the same numbers, maintained where the underlying arrays change.
+     They are display-only: nothing in the simulation reads them, so they
+     cannot affect the state hash.
+
+     Resource counts mirror the old filters exactly — the old code counted
+     every matching entry in `resources` regardless of .dead or .carried, and
+     `resources` is only ever mutated in three places: addRes (push),
+     dropCarried (splice) and resetWorld (length = 0).
+  --------------------------------------------------------- */
+  const liveCounts = { ants: 0, eggs: 0, alates: 0, mushrooms: 0, milk: 0 };
+
+  function countRes(kind, delta) {
+    if (kind === 'mushroom') liveCounts.mushrooms += delta;
+    else if (kind === 'milk') liveCounts.milk += delta;
+  }
+
   function addRes(kind, x, y, extra = {}) {
     resources.push({ id: nextId++, kind, x: wrapX(x), y, amt: 10, dead: false, carried: false, ...extra });
+    countRes(kind, 1);
   }
 
   /* =========================================================
@@ -586,12 +663,28 @@
       if (a.hp <= 0) a.dead = true;
     }
 
-    // Clean dead ants
+    // Clean dead ants, and recount the live castes in the same pass. This loop
+    // already walked every ant; the HUD's six filter arrays are now folded
+    // into it. Survivors here are exactly what updateUI() used to filter for.
+    liveCounts.ants = 0;
+    liveCounts.eggs = 0;
+    liveCounts.alates = 0;
+    for (const c of colonies) c.livePop = 0;
+
     for (let i = ants.length - 1; i >= 0; i--) {
-      if (ants[i].dead) {
-        const dAnt = ants[i];
-        addRes('corpse', dAnt.x, dAnt.y, { team: dAnt.team });
+      const a = ants[i];
+      if (a.dead) {
+        addRes('corpse', a.x, a.y, { team: a.team });
         ants.splice(i, 1);
+        continue;
+      }
+      if (a.caste === CASTE.EGG) {
+        liveCounts.eggs++;
+      } else {
+        liveCounts.ants++;
+        const col = colonyForAnt(a);
+        if (col) col.livePop++;
+        if (a.caste === CASTE.VIRGIN_QUEEN || a.caste === CASTE.MALE) liveCounts.alates++;
       }
     }
 
@@ -646,7 +739,7 @@
      9) Individual Ant Behavior Machine
   ========================================================= */
   function stepAnt(a) {
-    const c = colonies.find(cc => cc.team === a.team);
+    const c = colonyForAnt(a);
     if (!c) return;
 
     // === EGG: Hatching ===
@@ -783,6 +876,7 @@
             // Convert Virgin Queen into Queen of New Colony
             a.caste = CASTE.QUEEN;
             a.team = newTeam;
+            a.colonyRef = newCol; // team changed: retarget the cached lookup
             a.x = newX;
             a.y = SURFACE_WALK_Y;
             a.mem.founding = true;
@@ -1099,7 +1193,7 @@
     r.x = a.x;
     r.y = a.y;
     const idxRes = resources.indexOf(r);
-    if (idxRes > -1) resources.splice(idxRes, 1);
+    if (idxRes > -1) { resources.splice(idxRes, 1); countRes(r.kind, -1); }
     a.carried = null;
     a.carriedKind = null;
   }
@@ -1155,6 +1249,11 @@
     mushGrowthTimer = 0;
     aphidMilkTimer = 0;
     balanceTimer = 0;
+    liveCounts.ants = 0;
+    liveCounts.eggs = 0;
+    liveCounts.alates = 0;
+    liveCounts.mushrooms = 0;
+    liveCounts.milk = 0;
     pherFood.fill(0);
     weather.kind = WEATHER.CLEAR;
     weather.untilGS = 0;
@@ -1400,12 +1499,13 @@
      13) UI Status & Report Updates
   ========================================================= */
   function updateUI() {
-    const totalAnts = ants.filter(a => a.caste !== CASTE.EGG).length;
-    const totalEggs = ants.filter(a => a.caste === CASTE.EGG).length;
+    // Counters accumulated in tickSimulation. No per-frame allocation here.
+    const totalAnts = liveCounts.ants;
+    const totalEggs = liveCounts.eggs;
     const activeColoniesCount = colonies.length;
-    const totalMushrooms = resources.filter(r => r.kind === 'mushroom').length;
-    const totalMilk = resources.filter(r => r.kind === 'milk').length;
-    const activeAlates = ants.filter(a => a.caste === CASTE.VIRGIN_QUEEN || a.caste === CASTE.MALE).length;
+    const totalMushrooms = liveCounts.mushrooms;
+    const totalMilk = liveCounts.milk;
+    const activeAlates = liveCounts.alates;
 
     // Update Status Bar
     const stColonies = document.getElementById('stat_colonies');
@@ -1422,7 +1522,7 @@
 
     if (stColonies) {
       const colonyDetails = colonies.map(c => {
-        const pop = ants.filter(a => a.team === c.team && a.caste !== CASTE.EGG).length;
+        const pop = c.livePop || 0;
         return `Colony #${c.id} (Team ${c.team}): Pop ${pop} | Food ${Math.floor(c.foodStore)} | 🍄 ${c.mushroomStore} | 🥛 ${c.milkStore} | Nuptial Flights: ${c.nuptialFlights}`;
       }).join('\n');
       stColonies.textContent = colonyDetails;
