@@ -773,7 +773,10 @@
             setTile(wrapX(ex + dx), c.homeY + dy, TILE.TUNNEL);
           }
         }
-        a.x = ex; a.y = c.homeY;
+        // Containment: another raw write that bypasses passableForAnt.
+        // createColony already clamps homeY into [surfaceY+25, H-10], so this
+        // is a no-op today and exists so it cannot stop being one silently.
+        a.x = ex; a.y = clamp(c.homeY, 0, H - 1);
         a.mem.founding = false;
       }
 
@@ -849,7 +852,11 @@
       if (a.role === ROLE.NUPTIAL_FLIGHT) {
         // Fly up to surface / sky
         if (a.y > SURFACE_WALK_Y - 5) {
-          a.y -= 1;
+          // Containment: this is a raw write that bypasses passableForAnt, so
+          // the only floor is the clamp. Guard condition keeps y >= 29 today,
+          // so this is a no-op at present -- which is the point: it stays a
+          // no-op if SURFACE_WALK_Y or the guard ever changes.
+          a.y = clamp(a.y - 1, 0, H - 1);
           a.x = wrapX(a.x + choice([-1, 1]));
           return;
         }
