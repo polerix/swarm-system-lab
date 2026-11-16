@@ -519,7 +519,7 @@
   let aphidMilkTimer = 0;
 
   function tickSimulation(dt) {
-    const gsdt = dt * GAME_SECONDS_PER_REAL_SECOND * simSpeed;
+    const gsdt = dt * GAME_SECONDS_PER_REAL_SECOND;
     gameSeconds += gsdt;
 
     const ph = currentPhase();
@@ -531,7 +531,7 @@
     }
 
     // 1) Mushroom Farm Cultivation & Growth Engine 🍄
-    mushGrowthTimer += dt * simSpeed;
+    mushGrowthTimer += dt;
     if (mushGrowthTimer >= 3.0) {
       mushGrowthTimer = 0;
       for (const c of colonies) {
@@ -551,7 +551,7 @@
     }
 
     // 2) Aphid Tending & Milk Production Engine 🥛
-    aphidMilkTimer += dt * simSpeed;
+    aphidMilkTimer += dt;
     if (aphidMilkTimer >= 4.0) {
       aphidMilkTimer = 0;
       for (const m of mobs) {
@@ -573,15 +573,15 @@
       if (a.hp <= 0) continue;
       if (a.dieAtGS && gameSeconds >= a.dieAtGS) { a.dead = true; continue; }
 
-      a.moveT += dt * simSpeed;
+      a.moveT += dt;
       if (a.moveT > 0.12) {
         a.moveT = 0;
         stepAnt(a);
       }
 
-      a.e -= dt * 0.2 * simSpeed;
+      a.e -= dt * 0.2;
       if (a.e <= 0) {
-        a.hp -= dt * 1.5 * simSpeed;
+        a.hp -= dt * 1.5;
       }
       if (a.hp <= 0) a.dead = true;
     }
@@ -598,7 +598,7 @@
     // 4) Mobs Update Loop
     for (const m of mobs) {
       if (m.hp <= 0) continue;
-      m.moveT += dt * simSpeed;
+      m.moveT += dt;
       if (m.moveT > 0.20) {
         m.moveT = 0;
         stepMob(m);
@@ -624,7 +624,7 @@
     }
 
     // 5) Spawners: Trees, Plants, Aphids, Leaves
-    if (rng() < 0.08 * simSpeed) {
+    if (rng() < 0.08) {
       if (resources.filter(r => r.kind === 'leaf').length < 35) {
         addRes('leaf', irand(5, W - 5), SURFACE_WALK_Y);
       }
@@ -634,7 +634,7 @@
     }
 
     // Fix 6: mealworm breeding — cap at 12
-    if (rng() < 0.02 * simSpeed) {
+    if (rng() < 0.02) {
       const mealworms = mobs.filter(m => m.type === 'mealworm' && !m.dead);
       if (mealworms.length < 12) {
         spawnMob('mealworm', irand(5, W - 5), SURFACE_WALK_Y + irand(2, 8));
@@ -651,7 +651,7 @@
 
     // === EGG: Hatching ===
     if (a.caste === CASTE.EGG) {
-      a.age += 0.15 * simSpeed;
+      a.age += 0.15;
       if (a.age >= a.hatchTime) {
         a.caste = a.willBe || CASTE.WORKER;
         a.age = 0;
@@ -663,7 +663,7 @@
 
     // === QUEEN: Laying Eggs & Managing Phases ===
     if (a.caste === CASTE.QUEEN) {
-      c.eggTimer += 0.15 * simSpeed * CFG.queenEggRate;
+      c.eggTimer += 0.15 * CFG.queenEggRate;
 
       // Founding Shaft & Seal
       if (a.mem.founding) {
@@ -1419,14 +1419,42 @@
   /* =========================================================
      14) Main Application Loop & Bindings
   ========================================================= */
-  let lastT = 0;
-  function loop(t) {
-    const dt = Math.min(0.1, (t - lastT) / 1000);
-    lastT = t;
+  const FIXED_DT = 1 / 60;        // seconds of sim advanced per step
+  const MAX_STEPS_PER_FRAME = 5;  // stall guard
+  let lastT = -1;                 // -1 => first frame contributes no time
+  let acc = 0;
 
+  // One fixed step. Shared by the rAF loop, the Balance Lab and the
+  // determinism harness so all three advance the world identically.
+  function stepFixed() {
+    tickSimulation(FIXED_DT);
+    autoBalance(FIXED_DT);
+  }
+
+  function loop(t) {
+    // First frame: establish the clock, advance nothing. The old code left
+    // lastT at 0, which handed frame one a full 0.1 s of simulation.
+    let dt = 0;
+    if (lastT >= 0) dt = (t - lastT) / 1000;
+    lastT = t;
+    if (!(dt > 0)) dt = 0;
+
+    // simSpeed is an accumulator rate, not a step count. Fractional speeds
+    // work, and speed does not fight the stall guard below.
+    acc += dt * simSpeed;
+
+    let steps = 0;
     try {
-      tickSimulation(dt);
-      autoBalance(dt);
+      // Unconsumed remainder stays in acc instead of being discarded.
+      while (acc >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+        stepFixed();
+        acc -= FIXED_DT;
+        steps++;
+      }
+      // Stall guard: if we are still behind after MAX_STEPS_PER_FRAME, drop
+      // the backlog rather than carrying a debt we can never pay off.
+      if (acc >= FIXED_DT * MAX_STEPS_PER_FRAME) acc = 0;
+
       draw();
       updateUI();
     } catch (e) {
