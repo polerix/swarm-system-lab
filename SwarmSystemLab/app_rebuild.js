@@ -1544,6 +1544,25 @@
   let lastT = -1;                 // -1 => first frame contributes no time
   let acc = 0;
 
+  /* ---------------------------------------------------------
+     Swallowed-error accounting.
+     The frame try/catch logs and continues, which is the right call -- one bad
+     frame should not kill the sim. But it means an exception can disable a
+     subsystem for the rest of the session with no sign of it anywhere except
+     a console nobody has open. The catch stays; it now also counts.
+  --------------------------------------------------------- */
+  const simErrors = { count: 0, first: null, firstAtGS: null, last: null };
+
+  function recordSimError(e) {
+    simErrors.count++;
+    const msg = (e && e.message) ? String(e.message) : String(e);
+    simErrors.last = msg;
+    if (simErrors.first === null) {
+      simErrors.first = msg;
+      simErrors.firstAtGS = Math.round(gameSeconds);
+    }
+  }
+
   // One fixed step. Shared by the rAF loop, the Balance Lab and the
   // determinism harness so all three advance the world identically.
   function stepFixed() {
@@ -1578,6 +1597,8 @@
       draw();
       updateUI();
     } catch (e) {
+      // Still logged, still non-fatal -- but no longer invisible.
+      recordSimError(e);
       console.error("Simulation error:", e);
     }
 
@@ -1689,7 +1710,9 @@
     setSeed: (n) => { const s = setSeed(n); resetWorld(); return s; },
     getSeed: () => getSeed(),
     determinismCheck: (seed, ticks) => determinismCheck(seed, ticks),
-    speedCheck: (seed, frames, speed) => speedCheck(seed, frames, speed)
+    speedCheck: (seed, frames, speed) => speedCheck(seed, frames, speed),
+    getErrors: () => ({ count: simErrors.count, first: simErrors.first, firstAtGS: simErrors.firstAtGS, last: simErrors.last }),
+    clearErrors: () => { simErrors.count = 0; simErrors.first = null; simErrors.firstAtGS = null; simErrors.last = null; }
   };
 
 })();
